@@ -1,0 +1,449 @@
+NAMING IDEAS : LATTICE ( .ltc ), CLAUSE ( .cl )
+
+
+TODO : review design tension :
+
+- Open scopes vs explicitness
+- Lifetime enforcement for captures
+
+
+TODO : possible avenues of expansion :
+
+- Elaborate on comptime vs runtime
+  - to make comptime specifiable
+  - to allow comptime execution
+
+- Add structs / class-lite
+
+- Add optional memory tags and their ordering
+  - to allow giving specific "application scopes" to variable anywhere
+  - ex :
+    dummy    : Int              := #undef; // does not have a MemTag
+    position : *Vec2   | FRAME  := #undef;
+    mesh     : *Mesh   | STATIC := #undef;
+    scratch  : *Buffer | TEMP   := #undef;
+
+  - in order to optionally specify what depends on what lifetime-wise
+  - ex :
+    GLOBAL1 : #MemTag;
+    GLOBAL2 : #MemTag => GLOBAL1; // depends on GLOBAL1 being in scope
+    GLOBAL3 : #MemTag => GLOBAL1;
+
+    globalVar1 : *Int | GLOBAL2 := 0;
+    globalVar2 : *Int | GLOBAL3 := 0;
+
+- Add batch execution / vectorised operation
+  - for explicit parallel processing
+
+- Define a canonical Control Flow Graph (CFG)
+
+- Add a generic function return technique ( use _ ? )
+
+
+
+// HERE
+
+
+============================================================
+                    LANGUAGE OVERVIEW
+============================================================
+
+================================
+ 1 : DESIGN PHILOSOPHY GUIDE
+================================
+
+This language is designed around explicit control of ownership, mutation, and scope.
+
+Every construct aims at answering three questions unambiguously:
+
+1 : Who owns the value?
+2 : Who is allowed to mutate it?
+3 : When may code access external state?
+
+
+==== CORE PRINCIPLES ====
+
+Ownership is local by default
+- values are owned, immutable, and confined to their scope
+- nothing is shared unless explicitly referenced
+
+Aliasing is explicit
+- sharing is only possible via references
+- no implicit aliasing exists
+
+Mutability is explicit
+- mutation requires a mutable qualifier
+- mutation requires a visible reference or capture
+
+No implicit external access
+- functions and procedures cannot access outer state
+- external access must be passed or captured explicitly
+
+Local reasoning is paramount
+- method signatures fully describe observable effects
+- no hidden side effects or ambient authority
+
+
+
+================================
+ 2 : CHEATSHEET
+================================
+
+
+==== VALUE AND REFERENCE QUALIFIERS ====
+
+
+Type   : immutable value
+&Type  : mutable   value
+*Type  : immutable reference
+*&Type : mutable   reference
+
+
+Summary table:
+
+Qualifier | Owns Data | Aliases data | Mutates Data
+- Type    | yes       | no           | no
+- &Type   | yes       | no           | yes
+- *Type   | no        | yes          | no
+- *&Type  | no        | yes          | yes
+
+
+Notes:
+- passing a value resets ownership
+- passing a reference shares access
+- mutability does not imply sharing
+- sharing does not imply mutability
+
+
+
+==== CALLABLE CONSTRUCTS ( METHODS ) ====
+
+
+Func : function
+Proc : procedure
+@foo : builtin callable
+
+Func :
+- closed execution scope
+- no implicit side effects
+- may mutate only mutable references or captures
+
+Proc :
+- like Func
+- supports continuations
+- controls caller-side execution flow
+
+@foo :
+- compiler or runtime provided
+- same rules as user-defined methods
+
+
+
+==== IDENTIFIERS ====
+
+
+bar  : local binding
+#bar : builtin identifier ( #main, #true, #undef )
+
+
+
+==== SCOPES ====
+
+
+[] : declaration scope ( parameters, captures )
+{} : closed execution scope
+() : open execution scope ( continuations )
+*  : reference creation / specification
+
+
+
+================================
+ 3 : IN-DEPTH FEATURE BREAKDOWN
+================================
+
+
+==== TYPES, VALUES, AND REFERENCES ====
+
+
+- Values own data
+- References alias existing bindings
+- Ownership and mutability are independent
+- References cannot outlive their referent
+- Creating a reference to a shorter-lived value is illegal
+
+
+
+==== EXECUTION MODEL ====
+
+
+// Execution is single-threaded and deterministic
+// Method calls are synchronous
+// No implicit concurrency
+
+
+// Two phases exist:
+//
+// Compile-time:
+// - method structure fixed
+// - captures resolved
+// - deferred computations constructed
+//
+// Runtime:
+// - methods execute
+// - mutable state changes
+// - deferred computations evaluated
+
+
+
+==== METHODS ====
+
+
+// A method is either a Func or a Proc
+// Methods do not return values implicitly
+// Observable effects occur only via:
+// - mutable references
+// - mutable captures
+// - control flow ( procedures )
+
+
+
+==== FUNCTIONS ====
+
+
+// Declaration:
+foo : Func = [ args : Types ]{ body };
+
+// Usage:
+foo[ args ];
+
+
+// Properties:
+// - closed scope
+// - no external access without capture
+// - no implicit control effects
+
+
+
+==== PROCEDURES AND CONTINUATIONS ====
+
+
+// Declaration:
+foo : Proc = [ args : Types ](*){ body };
+
+// Usage:
+foo[ args ]( continuation );
+
+
+// Continuation:
+// - open scope
+// - executes only when @exec(*) is called
+// - may execute zero or more times
+
+
+// @exec(*) : executes the attached continuation
+//            - resumes procedure after continuation returns
+
+
+
+==== DEFERRED COMPUTATIONS ====
+
+
+// $Type( body ) : deferred computation
+//                 - runtime value representing delayed evaluation
+//                 - captures referenced variables immutably
+//                 - cannot mutate external state
+//                 - does not execute until evaluated
+
+
+// @eval( expr ) : evaluates deferred computation
+//                 - produces a value
+//                 - has no side effects
+
+
+// Shorthand:
+// - $expr allowed only when passed as parameter
+
+
+
+==== CAPTURING ====
+
+
+// Captures bind external variables at declaration time
+
+
+foo : Func = [ args ]{ body }                 // no capture
+foo : Func = [ args ][ captured ]{ body }     // capture
+
+
+// Captured variables:
+// - must exist at declaration time
+// - are never supplied at call time
+
+
+
+==== COMPILE-TIME CAPTURE ====
+
+
+// [ capturedVar ]
+// - value substituted at compile-time
+// - enables specialization / templating
+// - immutable only
+// - no runtime aliasing
+
+
+
+==== RUNTIME CAPTURE ====
+
+
+// [ *capturedVar ]
+// [ *&capturedVar ]
+// - captures a reference
+// - enables shared mutable state
+// - mutation affects original binding
+
+
+// Lifetime rule:
+// - captured variable must outlive the method
+// - capturing shorter-lived values is illegal
+
+
+
+==== BUILTINS ====  ( non-exhaustive )
+
+
+// @return[] : exits current closed scope
+//             - does not return a value
+
+
+// @repeat[] : exits and re-enters current closed scope
+//             - restarts execution
+//             - mutable parameters and captures preserved
+//             - prior side effects are not rolled back
+
+
+
+================================
+ 4 : CODE SNIPPETS BY TASK
+================================
+
+
+==== EXPLICIT MUTABLE OUTPUT ====
+
+
+// Compute a sum via an explicit output parameter
+
+add : Func = [ ret : *&Int, a : Int, b : Int ]
+{
+  ret = a + b;
+};
+
+
+// Initial values
+
+val1 : Int  = 1;
+val2 : Int  = 1;
+sum  : &Int = #undef;
+
+
+// Explicitly pass mutable output variable
+
+add[ *&sum, val1, val2 ];
+
+
+// Immutable value passed to builtin output routine
+
+@printInt[ sum ];
+
+
+
+==== CONTROL FLOW VIA PROCEDURES ====
+
+
+// Conditional execution
+
+ifTrue : Proc = [ cond : $Bool ](*)
+{
+  @ifEq[ $cond, #true ]
+  (
+    @exec(*);
+  );
+};
+
+
+// Looping via repetition
+
+whileTrue : Proc = [ cond : $Bool ](*)
+{
+  ifTrue[ cond ]
+  (
+    @exec(*);
+    @repeat[];
+  );
+};
+
+
+
+==== STATEFUL COMPUTATION ( FIBONACCI ) ====
+
+
+// Advance Fibonacci state
+
+increment : Func = [ prev : *&Int, res : *&Int ]
+{
+  tmp : &Int = res;
+
+  add[ &res, prev, res ];
+  prev = tmp;
+
+  @printInt[ res ];
+};
+
+
+// Execution
+
+sum   : &Int = 0;
+val   : &Int = 1;
+limit : Int  = 100;
+
+whileTrue[ $Bool( sum <= limit )]
+(
+  increment[ *&val, *&sum ];
+);
+
+
+
+==== FUNCTION GENERATION AND CAPTURES ====
+
+
+// Compile-time capture
+
+incrementValue : Int = 3;
+
+valueIncrementer : Func = [ *&val : Int ][ incrementValue ]
+{
+  val = val + incrementValue;
+};
+
+
+// Runtime mutable capture
+
+counter : &Int = 0;
+
+valueCounter : Func = [ val : Int ][ *&counter ]
+{
+  counter = counter + val;
+};
+
+
+// Generated function with shared state
+
+generateSharedCounter : Func = [ f : &Func ]
+{
+  shared : &Int = 0;
+
+  f = [ val : Int, ret : &Int ][ *&shared ]
+  {
+    shared = shared + val;
+    ret = shared;
+  };
+};
