@@ -1,0 +1,576 @@
+NAMING IDEAS : LATTICE ( .ltc ), CLAUSE ( .cl )
+
+
+TODO : review design tension :
+
+- Open scopes vs explicitness
+- Lifetime enforcement for captures
+
+
+TODO : possible avenues of expansion :
+
+- Elaborate on comptime vs runtime
+  - to make comptime specifiable
+  - to allow comptime execution
+
+- Add structs / class-lite
+
+- Add batch execution / vectorised operation
+  - for explicit parallel processing
+
+- Define a canonical Control Flow Graph (CFG)
+
+- Add a generic function return technique ( foo.retVal ? )
+
+
+
+============================================================
+                    LANGUAGE OVERVIEW
+============================================================
+
+
+================================
+ 1 : DESIGN PHILOSOPHY
+================================
+
+
+This language is designed around explicit control of ownership, mutation, and scope.
+
+Every construct aims at answering three questions unambiguously:
+
+1 : Who owns the value?
+2 : Who is allowed to mutate it?
+3 : When may code access external state?
+
+
+
+==== CORE PRINCIPLES ====
+
+
+Ownership is local by default
+- values are owned, immutable, and confined to their scope
+- nothing is shared unless explicitly referenced
+
+Aliasing is explicit
+- sharing is only possible via references
+- no implicit aliasing exists
+
+Mutability is explicit
+- mutation requires a mutable qualifier
+- aliasing requires a visible reference or capture
+
+No implicit external access
+- functions and procedures cannot access outer state
+- external access must be passed or captured explicitly
+
+Local reasoning is paramount
+- method signatures fully describe observable effects
+- no hidden side effects or ambient authority
+
+
+
+==== EXECUTION MODEL ====
+
+
+Execution properties :
+
+- single-threaded
+- deterministic
+- synchronous method calls
+- no implicit concurrency or parallelism
+
+
+Execution phases :
+
+Compile-time ( comptime ) :
+
+- method structure is fixed
+- captures are resolved
+- memory regions are declared
+- deferred computations are constructed
+
+
+Run-time ( runtime ) :
+
+- methods execute
+- mutable state is modified
+- deferred computations are evaluated
+
+
+
+================================
+ 2 : FEATURE BREAKDOWN
+================================
+
+
+======== SYNTAX ========
+
+
+==== VALUES, REFERENCES, AND MUTABILITY ====
+
+Type   :   immutable value
+&Type  :   mutable   value
+*Type  :   immutable reference
+*&Type :   mutable   reference
+
+
+Qualifier semantics :
+
+Qualifier | Owns Data | Aliases Data | Mutates Data
+
+- Type    | yes       | no           | no
+- &Type   | yes       | no           | yes
+- *Type   | no        | yes          | no
+- *&Type  | no        | yes          | yes
+
+
+Core rules :
+
+- values own their data
+- references alias existing bindings
+- ownership and mutability are orthogonal
+- mutability does not imply aliasing
+- aliasing does not imply mutability
+
+
+Passing semantics :
+
+- passing a value copies ownership
+- passing a reference shares access
+
+
+Lifetime safety :
+
+- references cannot outlive their referent
+- creating a reference to a shorter-lived value is illegal
+- all lifetime violations are compile-time errors
+
+
+==== SCOPES ====
+
+"[]" :   declaration scope
+
+- used for parameters and captures
+- evaluated at compile-time
+
+
+"{}" :   closed execution scope
+
+- isolated execution context
+- no implicit access to external bindings
+- bindings exist only during execution
+
+
+"()" :   open execution scope
+
+- shares surrounding execution context
+- may read and mutate surrounding bindings
+- execution may be deferred
+
+
+==== BASE OPERATORS ====
+
+":=" :   assignment   operator
+"="  :   reassignment operator
+"=>" :   ordering     operator
+
+"+",  "-",  "*".  "/",  "%"      :   arithmetic operators ( % == remainder )
+"+=", "-=", "*=". "/=", "%="     :   arithmetic assignment operators
+"==", "!=", ">=". "<=", ">", "<" :   boolean operators
+
+
+
+
+
+======== METHODS ========
+
+
+A method is either a Func or a Proc.
+
+Shared properties :
+
+- closed execution scope
+- no implicit external access
+- no implicit side effects
+- no implicit return values
+
+
+Observable effects occur only via :
+
+- mutable references
+- mutable captures
+- control flow ( procedures )
+
+
+Calling rules :
+
+- functions and procedures may call each other freely
+- the only semantic distinction is continuation support
+- all other rules apply uniformly
+
+
+==== FUNCTIONS ====
+
+Decl. :   foo : Func := [ args : Types ]{ body };
+
+Usage :   foo[ args ];
+
+
+==== PROCEDURES AND CONTINUATIONS ====
+
+Decl. :   foo : Proc := [ args : Types ](*){ body };
+
+Usage :   foo[ args ]( continuation; );
+
+
+Continuation semantics :
+
+- continuation is an open execution scope
+- executes in the caller’s context
+- executes only when explicitly invoked
+- may execute zero or more times
+
+
+@exec(*) :
+
+- pauses procedure execution temporarily
+- executes the attached continuation
+- resumes procedure execution afterward
+
+// TODO : add @break[] or equivalent
+
+
+Note :
+
+- continuations do not violate local reasoning
+- procedure-local state does not leak into the continuation
+- caller-local state is not implicitly visible to the procedure
+- @exec(*) merely instructs the caller whether to run the continuation
+
+
+
+==== DEFERRED COMPUTATIONS ====
+
+
+Declaration :   $Type( body )
+
+- runtime value representing delayed evaluation
+- captures referenced variables immutably
+- obeys the same lifetime rules as captures
+- cannot mutate external state
+- does not execute until evaluated
+
+
+Evaluation :   @eval( expr )
+
+- evaluates the deferred computation
+- produces a value
+- has no side effects
+
+
+$expr
+
+- shorthand form of @eval( expr )
+- allowed only when passing a parameter downstream
+
+
+
+======== CAPTURING ========
+
+
+Purpose :
+
+- bind external variables at method declaration time
+- eliminate implicit external access while avoiding usetime paramter clutter
+- make dependencies explicit and statically verifiable
+- allow for basic function templating
+
+
+Usage :
+
+foo : Func := [ args ]{ body }                 // no capture
+foo : Func := [ args ][ captured ]{ body }     // capture
+
+
+General rules :
+
+- captured variables must exist at declaration time
+- captured variables are never supplied at call time
+- capture resolution occurs at compile-time
+
+
+==== COMPTIME CAPTURING ====
+
+[ capturedVar ] ( comptime variable )
+
+
+Purpose :
+
+- value substituted directly into method body
+- enables specialization / templating
+- immutable only
+- no runtime aliasing
+- no lifetime tracking required
+
+
+==== RUNTIME CAPTURING ====
+
+[ *capturedVar  ] ( immutable )
+[ *&capturedVar ] ( mutable )
+
+
+Purpose :
+
+- captures a reference to an existing binding
+- enables shared mutable or immutable state
+- mutation affects the original binding
+
+
+Lifetime rules :
+
+- captured variable must outlive the method
+- capturing shorter-lived values is illegal
+- violations are compile-time errors
+
+
+
+======== MEMORY REGIONS ========
+
+
+Purpose :
+
+- define explicit storage regions with statically verified lifetimes
+- decouple storage lifetime from lexical scope
+- enable safe returning of references
+- generalize static storage without implicit globals
+
+
+Properties :
+
+- regions are compile-time entities
+- regions define storage lifetime, not visibility
+- regions may outlive functions, blocks, or modules
+- region relationships form a DAG ( Directed Acyclic Graph )
+- cycles ( cylcic referencing ) are compile-time errors
+
+
+Rules :
+
+- region qualification is optional
+- binding is allocated in the specified region
+- binding remains valid while the region is alive
+- unqualified bindings use the current lexical region
+- bar is initialized when the region is entered
+
+
+Lifetime safety :
+
+- a reference is valid only if its target region outlives its usage
+- returning a reference requires the target region to outlive the caller
+- invalid region relationships are rejected at compile-time
+
+
+==== USAGE ====
+
+REG1 : #MemReg;
+REG2 : #MemReg;
+
+REG1 => REG2;
+
+bar : &Foo | REG2 := value;
+
+
+Meaning :
+
+- REG1 and REG2 are memory region tags
+- REG1 outlives REG2
+- references from REG2 into REG1 are allowed
+- references from REG1 into REG2 are illegal
+- bar belongs to region REG2
+
+
+==== BUILTIN REGION AND CONTROLS ====
+
+#GLOBAL : #MemReg := #HERE;
+
+- program-wide root region
+- implicitly entered before #main
+- exited at program termination
+- all other regions must ultimately outlive or be contained by #GLOBAL
+
+
+@enter[ REG ];   // initializes   region REG ( and its associated variables )
+@exit[  REG ];   // deinitializes region REG ( and its associated variables )
+
+Discipline :
+
+- explicit @enter / @exit is mandatory
+- region lifetime is always explicit
+- no implicit heap promotion or escape analysis
+
+
+======== LANGUAGE BUILTINS ========
+
+
+==== BUILTIN IDENTIFIERS ====
+
+#bar :   compiler-defined identifier
+
+Examples :
+- #true
+- #false
+- #undef
+- #main    - entrypoint function ( assignable )
+- #GLOBAL  - top memory region ( program lifespan )
+
+
+
+==== BUILTIN METHODS ====
+
+@foo[] :   compiler-defined function / procedure
+
+@doIf[    expr : $Bool ](*)  -
+@doWhile[ expr : $Bool ](*)  -
+
+
+==== BUILTIN CONTROL TAGS ====
+
+@enter[ REG : #MemReg ]   - initializes memory region REG
+@exit[  REG : #MemReg ]   - deinitializes memory region REG
+
+
+@return[]   - exits current closed scope
+            - does not return a value
+
+@repeat[]   - exits and re-enters current closed scope
+            - restarts execution
+            - mutable parameters and captures preserved
+            - prior side effects are not rolled back
+
+
+
+================================
+ 3 : CODE SNIPPETS
+================================
+
+
+==== EXPLICIT MUTABLE OUTPUT ====
+
+
+// Compute a sum via an explicit return parameter
+
+add : Func := [ ret : *&Int, a : Int, b : Int ]
+{
+  ret := a + b;
+};
+
+
+// Initial values
+
+val1 : Int  := 1;
+val2 : Int  := 1;
+sum  : &Int := #undef;
+
+
+// Explicitly pass mutable output variable
+
+add[ *&sum, val1, val2 ];
+
+
+// Immutable value passed to builtin output routine
+
+@printInt[ sum ];
+
+
+
+==== CONTROL FLOW VIA PROCEDURES ====
+
+
+// Conditional execution
+
+ifTrue : Proc := [ cond : $Bool ](*)
+{
+  @doIf[ $cond ]
+  (
+    @exec(*);
+  );
+};
+
+
+// Looping via repetition
+
+whileTrue : Proc := [ cond : $Bool ](*)
+{
+  ifTrue[ cond ]
+  (
+    @exec(*);
+    @repeat[];
+  );
+};
+
+
+
+==== STATEFUL COMPUTATION ( FIBONACCI ) ====
+
+
+// Advance Fibonacci state
+
+increment : Func := [ prev : *&Int, res : *&Int ]
+{
+  tmp : &Int := res;
+
+  add[ &res, prev, res ];
+  prev = tmp;
+
+  @printInt[ res ];
+};
+
+
+// Execution
+
+sum   : &Int := 0;
+val   : &Int := 1;
+limit : Int  := 100;
+
+whileTrue[ $Bool( sum <= limit )]
+(
+  increment[ *&val, *&sum ];
+);
+
+
+
+==== FUNCTION GENERATION AND CAPTURES ====
+
+
+// Compile-time capture
+
+incrementValue : Int | #GLOBAL := 0;
+
+valueIncrementer : Func := [ *&val : Int ][ incrementValue ]
+{
+  val += incrementValue;
+};
+
+
+// Runtime mutable capture
+
+counter : &Int| GLOBAL := 0;
+
+valueCounter : Func := [ val : Int ][ *&counter ]
+{
+  counter += val;
+};
+
+
+// Generated function referencing shared state
+
+generateSharedCounter : Func := [ f : &Func ]
+{
+  shared : &Int | GLOBAL := 0;
+
+  f = [ val : Int, ret : &Int ][ *&shared ]
+  {
+    shared += val;
+    ret = shared;
+  };
+};
